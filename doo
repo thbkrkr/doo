@@ -1,0 +1,243 @@
+#!/bin/bash -u
+set -o pipefail
+
+help() {
+echo 'Usage: doo COMMAND [arg...]
+
+A docker assistant to build, ship and run containers.
+
+The image NAME is built using the name of the current directory and the env var DOCKER_REPO.
+
+Build, tag and push required the env var DOCKER_REPO must be defined.
+
+Dev and go discover run containers by using all *.env files found in the current
+directy in the --env-file argument and all directories that appears in COPY directives
+as --volume.
+
+Commands:
+  b, build      docker build $DOCKER_REPO/$NAME
+  t, tag        docker tag   $DOCKER_REPO/$NAME:VERSION (VERSION: sha1 if git repo and/or latest)
+  p, push       docker push  $DOCKER_REPO/$NAME
+
+  u, up         docker compose up -d using the first .yml found in the current directory
+  c ARGS...     docker compose ARGS  using the first .yml found in the current directory
+
+  d, dev        docker run $DOCKER_REPO/$NAME by loading env-files and
+                mounting current directories based on the Dockerfile COPY directives
+  g, go  IMAGE  docker run $IMAGE by loading env-files and mounting current directories
+'
+}
+
+get_sha1() {
+  [ ! -d .git ] && echo "latest" && return
+  git rev-parse --short HEAD
+}
+
+env_files() {
+  local arg=""
+  while read env_file; do
+    arg="$arg --env-file=$(readlink -f $env_file)"
+  done < <(find . -name "*.env" -type f)
+  echo "$arg"
+}
+
+mounted_volumes() {
+  local arg=""
+  while read copy_line; do
+    src=$(pwd)/$(cut -d ' ' -f2 <<< $copy_line)
+    dst=$(cut -d ' ' -f3 <<< $copy_line)
+    arg="$arg -v $src:$dst"
+  done < <(grep COPY Dockerfile)
+  echo "$arg"
+}
+
+doo_cmd() {
+  declare name=$NAME
+  declare cmd=$1
+  shift
+
+  declare repo=${DOCKER_REPO:-""}
+  [[ $repo == "" ]] && echo "err: DOCKER_REPO not set" && return 1
+
+  declare long_cmd=""
+
+  case $cmd in
+    b|build)
+      long_cmd="docker build --rm -t $repo/$name ."
+    ;;
+    d|dev)
+      long_cmd="docker run --rm -ti $(env_files) $(mounted_volumes) $@ $repo/$name"
+    ;;
+    g|go)
+      go_name=${1:-""} && shift
+      [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
+      workdir=$name
+      long_cmd="docker run --rm -ti $(env_files) -v $(pwd):/$name -w /$workdir $repo/$go_name $@"
+    ;;
+    dc)
+      declare compose_file=$(find . -maxdepth 1 -name "*.yml")
+      long_cmd="docker-compose -f $compose_file $@"
+    ;;
+    u|up)
+      declare compose_file=$(find . -maxdepth 1 -name "*.yml")
+      long_cmd="docker-compose -f $compose_file up -d"
+    ;;
+    t|tag)
+      declare sha1=$(get_sha1)
+      if [[ "$sha1" != "latest" ]]; then
+        echo "docker tag $repo/$name $repo/$name:$sha1"
+      fi
+    ;;
+    p|push)
+      long_cmd="docker push $repo/$name"
+    ;;
+    *)
+      echo "doo: '$cmd' is not a dooo command."
+      echo "See 'doo help'."
+      exit 1
+    ;;
+    esac
+
+    echo "$long_cmd"
+}
+
+main() {
+  local cmd=${1:-""}
+  shift
+
+  declare log="false"
+  case $cmd in
+    b|build|dc|u|up|t|tag|p|push)
+      log="true"
+      ;;
+    r|run|d|dev|g|go)
+      ;;
+    w|watch)
+      rm -f ~/.doo/*.doo
+      while true; do
+        clear;
+        echo "[$(date +%Y%m%d-%Hh%Mm%S)] > doo watch..."
+        find ~/.doo -type f -name "*.doo" | xargs -n1 head -1 \
+          | tail -6 | sort -r \
+          | jq -c '{date:.timestamp,status:.status,action:.cmd,cmd:.long_cmd,msg:.title}'
+        sleep 1
+      done
+      ;;
+    ""|h|help)
+      help
+      exit 0 ;;
+    *)
+      echo "doo: '$cmd' is not a dooo command."
+      echo "See 'doo help'."
+      exit 1 ;;
+  esac
+
+  NAME=$(basename $(pwd))
+
+  # Get the command to execute
+  declare long_cmd="$(doo_cmd $cmd "$@")"
+
+  # Execute the command without posting result
+
+  if [[ $log == "false" ]]; then
+    echo "$long_cmd"
+    $long_cmd
+    exit $?
+  fi
+
+  # Execute the command by posting result
+
+  mkdir -p ~/.doo
+  declare logfile=~/.doo/$(date +%s.$cmd.$(date +%N)$RANDOM.doo)
+
+  declare start=$(date +%s)
+  declare status=pending
+
+  declare bold="\e[1m"
+  declare reset_bold="\e[0m"
+  declare cyan="\e[36m"
+  declare green="\e[32m"
+  declare purple="\e[35m"
+  declare red="\e[31m"
+  declare reset="\e[39m"
+
+  declare color=$cyan
+
+  # Print info
+  echo '{
+    "timestamp":"'$start'",
+    "name":"'$NAME'",
+    "status":"pending",
+    "cmd":"'$cmd'",
+    "long_cmd":"'$long_cmd'",
+    "logfile":"'$logfile'"
+  }' | jq -c . >> $logfile
+  echo >> $logfile
+
+  $long_cmd 2>&1 | tee -a $logfile
+  status=$?
+
+  #  docker-compose can return 0 and have ERROR :-/
+  if [[ $(grep -ic error $logfile) -gt 0 ]]; then
+    status=1
+  fi
+
+  case $status in
+    0 ) status=OK;    color1=$cyan;   color2=$green ;;
+    * ) status=ERROR; color1=$purple; color2=$red ;;
+  esac
+
+  fullmsg() {
+    while read line; do
+      echo "$line<br>" \
+        | sed -e "s|\"|'|g" -e 's|\\|\\\\|g' \
+        | strings
+    done < <(
+      tail -n +3 $logfile | grep -v "Sending"
+    )
+  }
+
+  # Update first logfile line with the result
+  declare end=$(date +%s)
+  declare msg="$(tail -1 $logfile | strings)"
+  declare duration=$(($end - $start))
+
+  declare from=$(hostname)
+  DOCKER_MACHINE_NAME=${DOCKER_MACHINE_NAME:-""}
+  [[ $DOCKER_MACHINE_NAME != "" ]] && from=$DOCKER_MACHINE_NAME
+
+  print_result() {
+    declare full=${1:-""}
+    [[ "$full" == "full" ]] && full='"message":"'$(fullmsg)'",'
+    echo '{
+      "timestamp":"'$(date +%s)'",
+      "name":"'$NAME'",
+      "source":"'$from'",
+      "cmd":"'$cmd'",
+      "status":"'$status'",
+      "duration_sec":"'$duration'",
+      "long_cmd":"'$long_cmd'",
+      "title":"'$msg'",
+      '$full'
+      "logfile":"'$logfile'"
+    }'
+  }
+
+  result() { print_result | jq -c .; }
+
+  sed -i "1s|.*|$(result)|" $logfile
+
+  echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
+
+  # Post event
+  LOGZ_ES=http://logz.blurb.space:9200
+  if [[ ! -z $LOGZ_ES ]]; then
+    declare sha1=$(print_result full | sha1sum | cut -c1-12)
+    status=$(curl -s -XPOST "$LOGZ_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
+    if [[ $status != 201 ]]; then
+      echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $LOGZ_ES/doo/command... failed with status $status$reset"
+    fi
+  fi
+}
+
+main "$@"
