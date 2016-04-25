@@ -132,7 +132,16 @@ main() {
       exit 1 ;;
   esac
 
+  # Use the current directory as the docker image name
   NAME=$(basename $(pwd))
+
+  # Try to get name from DOCKER_NAME env var defined in .docker.env
+  if [[ -f .docker.env ]]; then
+    n=$(grep DOCKER_NAME .docker.env | sed "s/DOCKER_NAME=//")
+    if [[ "$n" != "" ]]; then
+      NAME=$n
+    fi
+  fi
 
   # Get the command to execute
   declare long_cmd="$(doo_cmd $cmd "$@")"
