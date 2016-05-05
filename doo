@@ -51,28 +51,33 @@ mounted_volumes() {
   echo "$arg"
 }
 
+set_docker_repo() {
+  DOCKER_REPO=${DOCKER_REPO:-""}
+  [[ $DOCKER_REPO == "" ]] && echo "err: DOCKER_REPO not set" && return 1
+}
+
 doo_cmd() {
   declare name=$NAME
   declare cmd=$1
   shift
 
-  declare repo=${DOCKER_REPO:-""}
-  [[ $repo == "" ]] && echo "err: DOCKER_REPO not set" && return 1
-
   declare long_cmd=""
 
   case $cmd in
     b|build)
-      long_cmd="docker build --rm -t $repo/$name ."
+      set_docker_repo
+      long_cmd="docker build --rm -t $DOCKER_REPO/$name ."
     ;;
     d|dev)
-      long_cmd="docker run --rm -ti $(env_files) $(mounted_volumes) $@ $repo/$name"
+      set_docker_repo
+      long_cmd="docker run --rm -ti $(env_files) $(mounted_volumes) $@ $DOCKER_REPO/$name"
     ;;
     g|go)
+      set_docker_repo
       go_name=${1:-""} && shift
       [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
       workdir=$name
-      long_cmd="docker run --rm -ti $(env_files) -v $(pwd):/$name -w /$workdir $repo/$go_name $@"
+      long_cmd="docker run --rm -ti $(env_files) -v $(pwd):/$name -w /$workdir $DOCKER_REPO/$go_name $@"
     ;;
     dc)
       declare compose_file=$(find . -maxdepth 1 -name "*.yml")
@@ -85,11 +90,11 @@ doo_cmd() {
     t|tag)
       declare sha1=$(get_sha1)
       if [[ "$sha1" != "latest" ]]; then
-        echo "docker tag $repo/$name $repo/$name:$sha1"
+        echo "docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$sha1"
       fi
     ;;
     p|push)
-      long_cmd="docker push $repo/$name"
+      long_cmd="docker push $DOCKER_REPO/$name"
     ;;
     *)
       echo "doo: '$cmd' is not a dooo command."
