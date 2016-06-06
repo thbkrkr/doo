@@ -68,19 +68,27 @@ doo_cmd() {
       set_docker_repo
       long_cmd="docker build --rm -t $DOCKER_REPO/$name ."
     ;;
+    bgo|buildgo)
+      set_docker_repo
+      local go_project_path=$(pwd | sed "s|.*/go/src/||")
+      declare buildenv="-e GOBIN=/go/bin/ -e CGO_ENABLED=0 -e GOPATH=/go"
+      declare image="golang:1.6.2-alpine"
+      long_cmd="docker run --rm -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $buildenv $image go build"
+    ;;
     d|dev)
       set_docker_repo
       long_cmd="docker run --rm -ti $(env_files) $(mounted_volumes) $@ $DOCKER_REPO/$name"
     ;;
     g|go)
       set_docker_repo
-      go_name=${1:-""} && shift
+      local go_name=${1:-""} && shift
       [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
-      workdir=$name
+      declare workdir=$name
       long_cmd="docker run --rm -ti $(env_files) -v $(pwd):/$name -w /$workdir $DOCKER_REPO/$go_name $@"
     ;;
     dc)
-      declare compose_file=$(find . -maxdepth 1 -name "*.yml")
+      local compose_file=${1:-$default_compose_file} && shift
+      declare default_compose_file=$(find . -maxdepth 1 -name "*.yml")
       long_cmd="docker-compose -f $compose_file $@"
     ;;
     u|up)
@@ -92,6 +100,10 @@ doo_cmd() {
       if [[ "$sha1" != "latest" ]]; then
         echo "docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$sha1"
       fi
+    ;;
+    bu)
+      doo b
+      doo u
     ;;
     p|push)
       long_cmd="docker push $DOCKER_REPO/$name"
@@ -112,10 +124,10 @@ main() {
 
   declare log="false"
   case $cmd in
-    b|build|dc|u|up|t|tag|p|push)
+    b|build|bgo|buildgo|dc|u|up|t|tag|p|push)
       log="true"
       ;;
-    r|run|d|dev|g|go)
+    d|dev|g|go)
       ;;
     w|watch)
       rm -f ~/.doo/*.doo
@@ -197,8 +209,8 @@ main() {
   fi
 
   case $status in
-    0 ) status=OK;    color1=$cyan;   color2=$green ;;
-    * ) status=ERROR; color1=$purple; color2=$red ;;
+    0 ) status=OK;    color1=$cyan  ; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
+    * ) status=ERROR; color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
   esac
 
   fullmsg() {
@@ -241,10 +253,18 @@ main() {
 
   sed -i "1s|.*|$(result)|" $logfile
 
-  echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
+  JSON=yes
+
+  if [[ "$JSON" != "no" ]]; then
+    print_result | jq -c .
+  else
+    echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
+  fi
+
+  #echo -e '{"user":"doo/bot","message":"<span style=color:'$htmlColor2'>'[$status]'</span> <span style=color:'$htmlColor'>'$long_cmd'</span>"}' | q
 
   # Post event
-  LOGZ_ES=http://logz.blurb.space:9200
+  LOGZ_ES=http://logz.blurb.space:9201
   if [[ ! -z $LOGZ_ES ]]; then
     declare sha1=$(print_result full | sha1sum | cut -c1-12)
     status=$(curl -s -XPOST "$LOGZ_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
