@@ -61,7 +61,7 @@ doo_cmd() {
   declare cmd=$1
   shift
 
-  declare long_cmd=""
+  declare long_cmd="" h=${DOCKER_MACHINE_NAME:-$(hostname)}
 
   case $cmd in
     b|build)
@@ -73,7 +73,7 @@ doo_cmd() {
       local go_project_path=$(pwd | sed "s|.*/go/src/||")
       declare buildenv="-e GOBIN=/go/bin/ -e CGO_ENABLED=0 -e GOPATH=/go"
       declare image="golang:1.6.2-alpine"
-      long_cmd="docker run --rm -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $buildenv $image go build"
+      long_cmd="docker run --rm --hostname $h -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $buildenv $image go build"
     ;;
     d|dev)
       set_docker_repo
@@ -84,7 +84,7 @@ doo_cmd() {
       local go_name=${1:-""} && shift
       [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
       declare workdir=$name
-      long_cmd="docker run --rm -ti $(env_files) -v $(pwd):/$name -w /$workdir $DOCKER_REPO/$go_name $@"
+      long_cmd="docker run --rm -ti --hostname $h $(env_files) -v $(pwd):/$name -w /$workdir $DOCKER_REPO/$go_name $@"
     ;;
     dc)
       local compose_file=$1 && shift
