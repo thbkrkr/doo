@@ -87,9 +87,10 @@ doo_cmd() {
       long_cmd="docker run --rm -ti $(env_files) -v $(pwd):/$name -w /$workdir $DOCKER_REPO/$go_name $@"
     ;;
     dc)
-      local compose_file=${1:-$default_compose_file} && shift
-      declare default_compose_file=$(find . -maxdepth 1 -name "*.yml")
-      long_cmd="docker-compose -f $compose_file $@"
+      local compose_file=$1 && shift
+      declare compose_project=$(basename $compose_file | sed "s/.yml//")
+
+      long_cmd="docker-compose -f $compose_file -p $compose_project $@"
     ;;
     u|up)
       declare compose_file=$(find . -maxdepth 1 -name "*.yml")
