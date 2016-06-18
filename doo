@@ -263,9 +263,9 @@ main() {
 
   sed -i "1s|.*|$(result)|" $logfile
 
-  # if [[ "$JSON" != "yes" ]]; then
-  #   print_result | jq -c .
-  # fi
+  if [[ "$JSON" == "yes" ]]; then
+    print_result | jq -c .
+  fi
 
   if [[ "$QUIET" != "yes" ]]; then
     echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
