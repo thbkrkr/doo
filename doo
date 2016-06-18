@@ -124,7 +124,7 @@ main() {
 
   declare log="false"
   case $cmd in
-    b|build|bgo|buildgo|dc|u|up|t|tag|p|push)
+    b|build|bgo|buildgo|dc|u|up|bu|t|tag|p|push)
       log="true"
       ;;
     d|dev|g|go)
