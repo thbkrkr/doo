@@ -123,6 +123,15 @@ main() {
   local cmd=${1:-""}
   shift
 
+  QUIET="no"
+  if [[ "$cmd" == "-q" ]]; then
+    QUIET="yes"
+    cmd=${1:-""}
+    shift
+  fi
+
+  JSON=${JSON:-"no"}
+
   declare log="false"
   case $cmd in
     b|build|bgo|buildgo|dc|u|up|bu|t|tag|p|push)
@@ -254,22 +263,20 @@ main() {
 
   sed -i "1s|.*|$(result)|" $logfile
 
-  JSON=yes
+  # if [[ "$JSON" != "yes" ]]; then
+  #   print_result | jq -c .
+  # fi
 
-  if [[ "$JSON" != "no" ]]; then
-    print_result | jq -c .
-  else
+  if [[ "$QUIET" != "yes" ]]; then
     echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
   fi
-
-  #echo -e '{"user":"doo/bot","message":"<span style=color:'$htmlColor2'>'[$status]'</span> <span style=color:'$htmlColor'>'$long_cmd'</span>"}' | q
 
   # Post event
   LOGZ_ES=http://logz.blurb.space:9201
   if [[ ! -z $LOGZ_ES ]]; then
     declare sha1=$(print_result full | sha1sum | cut -c1-12)
     status=$(curl -s --connect-timeout 2 -XPOST "$LOGZ_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
-    if [[ $status != 201 ]]; then
+    if [[ "$status" != "201" &&  "$QUIET" != "yes" ]]; then
       echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $LOGZ_ES/doo/command... failed with status $status$reset"
     fi
   fi
