@@ -70,10 +70,12 @@ doo_cmd() {
     ;;
     bgo|buildgo)
       set_docker_repo
+      local commit=${1:-"$(git rev-parse --short HEAD)"} && shift
       local go_project_path=$(pwd | sed "s|.*/go/src/||")
-      declare buildenv="-e GOBIN=/go/bin/ -e CGO_ENABLED=0 -e GOPATH=/go"
+      declare build_env="-e GOBIN=/go/bin/ -e CGO_ENABLED=0 -e GOPATH=/go"
       declare image="golang:1.6.2-alpine"
-      long_cmd="docker run --rm --hostname $h -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $buildenv $image go build"
+      declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
+      long_cmd="docker run --rm --hostname $h -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $build_env $image go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
     ;;
     d|dev)
       set_docker_repo
@@ -101,10 +103,6 @@ doo_cmd() {
       if [[ "$sha1" != "latest" ]]; then
         echo "docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$sha1"
       fi
-    ;;
-    bu)
-      doo b
-      doo u
     ;;
     p|push)
       long_cmd="docker push $DOCKER_REPO/$name"
@@ -134,11 +132,23 @@ main() {
 
   declare log="false"
   case $cmd in
-    b|build|bgo|buildgo|dc|u|up|bu|t|tag|p|push)
+    b|build|buildgo|dc|u|up|t|tag|p|push)
+      log="true"
+      ;;
+    bgo)
+      local commit=${1:-"$(git rev-parse --short HEAD)"}
+      declare image="golang:1.6.2-alpine"
+      declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
+      echo "[$image] go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
       log="true"
       ;;
     d|dev|g|go)
       ;;
+    bu)
+      doo b
+      doo u
+      exit $?
+    ;;
     w|watch)
       rm -f ~/.doo/*.doo
       while true; do
@@ -177,7 +187,7 @@ main() {
 
   if [[ $log == "false" ]]; then
     echo "$long_cmd"
-    $long_cmd
+    eval $long_cmd
     exit $?
   fi
 
@@ -205,12 +215,12 @@ main() {
     "name":"'$NAME'",
     "status":"pending",
     "cmd":"'$cmd'",
-    "long_cmd":"'$long_cmd'",
+    "long_cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
     "logfile":"'$logfile'"
   }' | jq -c . >> $logfile
   echo >> $logfile
 
-  $long_cmd 2>&1 | tee -a $logfile
+  eval $long_cmd 2>&1 | tee -a $logfile
   status=$?
 
   #  docker-compose can return 0 and have ERROR :-/
@@ -252,7 +262,7 @@ main() {
       "cmd":"'$cmd'",
       "status":"'$status'",
       "duration_sec":"'$duration'",
-      "long_cmd":"'$long_cmd'",
+      "long_cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
       "title":"'$msg'",
       '$full'
       "logfile":"'$logfile'"
