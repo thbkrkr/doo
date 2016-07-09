@@ -52,6 +52,7 @@ mounted_volumes() {
 }
 
 set_docker_repo() {
+  [ -f .docker.env ] && export $(cat .docker.env | xargs)
   DOCKER_REPO=${DOCKER_REPO:-""}
   [[ $DOCKER_REPO == "" ]] && echo "err: DOCKER_REPO not set" && return 1
 }
