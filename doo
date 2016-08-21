@@ -84,10 +84,14 @@ doo_cmd() {
     ;;
     g|go)
       set_docker_repo
+      local opts=""
+      if [[ "$1" =~ ^- ]]; then
+        opts="$1 $2" && shift && shift
+      fi
       local go_name=${1:-""} && shift
       [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
       declare workdir=$name
-      long_cmd="docker run --rm -ti --hostname $h $(env_files) -v $(pwd):/$name -w /$workdir $DOCKER_REPO/$go_name $@"
+      long_cmd="docker run --rm -ti --hostname $h $(env_files) -v $(pwd):/$name -w /$workdir $opts $DOCKER_REPO/$go_name $@"
     ;;
     dc)
       local compose_file=$1 && shift
