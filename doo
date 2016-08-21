@@ -117,9 +117,9 @@ doo_cmd() {
       echo "See 'doo help'."
       exit 1
     ;;
-    esac
+  esac
 
-    echo "$long_cmd"
+  echo "$long_cmd"
 }
 
 main() {
@@ -169,7 +169,7 @@ main() {
       help
       exit 0 ;;
     *)
-      echo "doo: '$cmd' is not a dooo command."
+      echo "doo: '$cmd' is not a doo command."
       echo "See 'doo help'."
       exit 1 ;;
   esac
@@ -191,7 +191,10 @@ main() {
   # Execute the command without posting result
 
   if [[ $log == "false" ]]; then
-    echo "$long_cmd"
+    VERBOSE=${VERBOSE:-0}
+    if [[ $VERBOSE == "1" ]]; then
+      echo "$long_cmd"
+    fi
     eval $long_cmd
     exit $?
   fi
