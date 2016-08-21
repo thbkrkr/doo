@@ -66,6 +66,9 @@ doo_cmd() {
 
   case $cmd in
     b|build)
+      if [ "$EUID" -ne 0 ]; then
+        sudo chown -R $USER:$USER .
+      fi
       set_docker_repo
       long_cmd="docker build --rm -t $DOCKER_REPO/$name ."
     ;;
