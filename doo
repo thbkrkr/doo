@@ -25,6 +25,8 @@ Commands:
 '
 }
 
+GO_VERSION=1.7.1
+
 get_sha1() {
   GIT_SHA1=${GIT_SHA1:-"no"}
   if [[ "$GIT_SHA1" != "no" ]]; then
@@ -82,7 +84,7 @@ doo_cmd() {
       local commit=${1:-"$(get_sha1)"} && shift
       local go_project_path=$(pwd | sed "s|.*/go/src/||")
       declare build_env="-e GOBIN=/go/bin/ -e CGO_ENABLED=0 -e GOPATH=/go"
-      declare image="golang:1.7.0-alpine"
+      declare image="golang:$GO_VERSION"
       declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
       long_cmd="docker run --rm --hostname $h -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $build_env $image go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
     ;;
@@ -150,7 +152,7 @@ main() {
       ;;
     bgo)
       local commit=${1:-"$(get_sha1)"}
-      declare image="golang:1.7.0-alpine"
+      declare image="golang:$GO_VERSION"
       declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
       echo "[$image] go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
       log="true"
