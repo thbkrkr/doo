@@ -25,7 +25,7 @@ Commands:
 '
 }
 
-GO_VERSION=1.7.1
+GO_VERSION=1.7.3
 
 get_sha1() {
   GIT_SHA1=${GIT_SHA1:-"no"}
