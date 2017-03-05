@@ -300,12 +300,11 @@ main() {
   fi
 
   # Post event
-  LOGZ_ES=http://logz.blurb.space:9201
-  if [[ ! -z $LOGZ_ES ]]; then
+  if [[ ! -z $DOO_ES ]]; then
     declare sha1=$(print_result full | sha1sum | cut -c1-12)
-    status=$(curl -s --connect-timeout 2 -XPOST "$LOGZ_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
+    status=$(curl -s --connect-timeout 2 -XPOST "$DOO_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
     if [[ "$status" != "201" &&  "$QUIET" != "yes" ]]; then
-      echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $LOGZ_ES/doo/command... failed with status $status$reset"
+      echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $DOO_ES/doo/command... failed with status $status$reset"
     fi
   fi
 }
