@@ -16,6 +16,8 @@ Commands:
   t, tag          docker tag   $DOCKER_REPO/$NAME:VERSION (VERSION: sha1 if git repo and/or latest)
   p, push         docker push  $DOCKER_REPO/$NAME
 
+  bgo, buildgo    build go binary in docker (docker run -v $PWD:/go/src/<package> golang:1.8.0 go build)
+
   u, up                        docker compose up -d by using the first .yml found in the current directory
   dc [COMPOSE_FILE] ARGS...    docker compose ARGS  by using the first .yml found in the current directory or
                                a given compose file
@@ -147,10 +149,10 @@ main() {
 
   declare log="false"
   case $cmd in
-    b|build|buildgo|dc|u|up|t|tag|p|push)
+    b|build|dc|u|up|t|tag|p|push)
       log="true"
       ;;
-    bgo)
+    bgo|buildgo)
       local commit=${1:-"$(get_sha1)"}
       declare image="golang:$GO_VERSION"
       declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
