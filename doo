@@ -122,6 +122,7 @@ doo_cmd() {
       fi
     ;;
     p|push)
+      set_docker_repo
       long_cmd="docker push $DOCKER_REPO/$name"
     ;;
     *)
