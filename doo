@@ -303,7 +303,7 @@ main() {
   fi
 
   # Post event
-  if [[ ! -z $DOO_ES ]]; then
+  if [[ "${DOO_ES:-}" != "" ]]; then
     declare sha1=$(print_result full | sha1sum | cut -c1-12)
     status=$(curl -s --connect-timeout 2 -XPOST "$DOO_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
     if [[ "$status" != "201" &&  "$QUIET" != "yes" ]]; then
