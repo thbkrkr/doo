@@ -250,8 +250,8 @@ main() {
   fi
 
   case $status_code in
-    0 ) status=OK;    color1=$cyan  ; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
-    * ) status=ERROR; color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
+    0 ) status=OK;    color=green color1=$cyan  ; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
+    * ) status=ERROR; color=red color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
   esac
 
   fullmsg() {
@@ -275,7 +275,11 @@ main() {
 
   print_result() {
     declare full=${1:-""}
+<<<<<<< HEAD
     [[ "$full" == "full" ]] && full='"message":"'$(fullmsg)'",'
+=======
+    [[ "$full" == "full" ]] && full=',"log":"'$(fullmsg)'"'
+>>>>>>> c188c99... html message
     echo '{
       "timestamp":"'$(date +%s)'",
       "name":"'$NAME'",
@@ -285,6 +289,10 @@ main() {
       "duration_sec":"'$duration'",
       "long_cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
       "title":"'$msg'",
+<<<<<<< HEAD
+=======
+      "message":"<a class=\"ui '$color' horizontal label\">'$status'</a> '$long_cmd'"
+>>>>>>> c188c99... html message
       '$full'
       "logfile":"'$logfile'"
     }'
@@ -302,14 +310,21 @@ main() {
     echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
   fi
 
-  # Post event
-  if [[ "${DOO_ES:-}" != "" ]]; then
-    declare sha1=$(print_result full | sha1sum | cut -c1-12)
-    status=$(curl -s --connect-timeout 2 -XPOST "$DOO_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
-    if [[ "$status" != "201" &&  "$QUIET" != "yes" ]]; then
-      echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $DOO_ES/doo/command... failed with status $status$reset"
+  notify() {
+    if [[ "${DOO_NOTIF_URL:-}" != "" ]]; then
+      #local sha1=$(print_result full | sha1sum | cut -c1-12)
+      #local url=$DOO_ES/doo/commands/$sha1
+      status=$(curl -su $U:$P --connect-timeout 2 -XPOST "$DOO_NOTIF_URL" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
+
+      if [[ "$status" != "200" && "$status" != "201" && "$QUIET" != "yes" ]]; then
+        echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $DOO_ES/doo/command... failed with status $status$reset"
+      fi
     fi
-  fi
+  }
+  # Send notification
+  notify
+
+  exit $status_code
 }
 
 main "$@"
