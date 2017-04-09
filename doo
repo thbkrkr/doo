@@ -242,14 +242,14 @@ main() {
   echo >> $logfile
 
   eval $long_cmd 2>&1 | tee -a $logfile
-  status=$?
+  status_code=$?
 
   #  docker-compose can return 0 and have ERROR :-/
   if [[ $(grep -ic error $logfile) -gt 0 ]]; then
-    status=1
+    status_code=1
   fi
 
-  case $status in
+  case $status_code in
     0 ) status=OK;    color1=$cyan  ; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
     * ) status=ERROR; color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
   esac
