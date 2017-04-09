@@ -272,6 +272,7 @@ main() {
     echo '{
       "timestamp":"'$(date +%s)'",
       "name":"'$NAME'",
+      "user":"'$from'",
       "source":"'$from'",
       "cmd":"'$cmd'",
       "status":"'$status'",
