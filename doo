@@ -78,8 +78,9 @@ doo_cmd() {
       if [ "$EUID" -ne 0 ]; then
         sudo chown -R $USER:$USER .
       fi
+      local commit=${1:-"$(get_sha1)"} && shift
       set_docker_repo
-      long_cmd="docker build --rm -t $DOCKER_REPO/$name ."
+      long_cmd="docker build --rm --label commit=$commit -t $DOCKER_REPO/$name ."
     ;;
     bgo|buildgo)
       set_docker_repo
@@ -165,6 +166,11 @@ main() {
     bu)
       doo b
       doo u
+      exit $?
+    ;;
+    bp)
+      doo b
+      doo p
       exit $?
     ;;
     w|watch)
@@ -296,8 +302,10 @@ main() {
   fi
 
   notify() {
-    if [[ "${DOO_NOTIF_URL:-}" != "" ]]; then
-      status=$(curl -su $U:$P --connect-timeout 2 -XPOST "$DOO_NOTIF_URL" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
+    if [[ "${DOO_ES:-}" != "" ]]; then
+      declare sha1=$(print_result full | sha1sum | cut -c1-12)
+      status=$(curl -s --connect-timeout 2 -XPOST "$DOO_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
+      #status=$(curl -su $U:$P --connect-timeout 2 -XPOST "$DOO_NOTIF_URL" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
 
       if [[ "$status" != "200" && "$status" != "201" && "$QUIET" != "yes" ]]; then
         echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $DOO_ES/doo/command... failed with status $status$reset"
