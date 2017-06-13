@@ -258,56 +258,58 @@ main() {
   }' | jq -c . >> $logfile
   echo >> $logfile
 
+  # Execute the command and pipe the stdin/stderr in a file
   eval $long_cmd 2>&1 | tee -a $logfile
   status_code=$?
 
-  #  docker-compose can return 0 and have ERROR :-/
+  # Hm, docker-compose can return 0 and have ERROR :-/
   if [[ $(grep -ic error $logfile) -gt 0 ]]; then
     status_code=1
   fi
 
+  # Set colors depending the status
   case $status_code in
     0 ) status=OK;    color=green color1=$cyan  ; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
     * ) status=ERROR; color=red color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
   esac
 
-  fullmsg() {
-    tail -n +3 $logfile | grep -v "Sending" | base64
-  }
 
-  # Update first logfile line with the result
   declare end=$(date +%s)
-  declare msg="$(tail -1 $logfile | strings)"
+  declare lastline="$(tail -1 $logfile | strings)"
   declare duration=$(($end - $start))
 
   declare from=$(hostname)
   DOCKER_MACHINE_NAME=${DOCKER_MACHINE_NAME:-""}
   [[ $DOCKER_MACHINE_NAME != "" ]] && from=$DOCKER_MACHINE_NAME
 
+  fullmsg() {
+    tail -n +3 $logfile | grep -v "Sending" | base64
+  }
+
   print_result() {
     declare full=${1:-""}
-    [[ "$full" == "full" ]] && full=',"log":"'$(fullmsg)'"'
+    [[ "$full" == "full" ]] && full=',"message":"'$(fullmsg)'"'
     echo '{
       "timestamp":"'$(date +%s)'",
       "name":"'$NAME'",
       "user":"'$from'",
       "source":"'$from'",
+      "title":"<a class=\"ui '$color' horizontal label\">'$status'</a> '$long_cmd'",
       "cmd":"'$cmd'",
       "status":"'$status'",
       "duration_sec":"'$duration'",
       "long_cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
-      "title":"'$msg'",
-      "message":"<a class=\"ui '$color' horizontal label\">'$status'</a> '$long_cmd'"
+      "lastline":"'$lastline'"
       '$full'
     }'
   }
 
-  result() { print_result | jq -c .; }
+  json_result() { print_result | jq -c .; }
 
-  sed -i "1s|.*|$(result)|" $logfile
+  sed -i "1s|.*|$(json_result)|" $logfile
 
   if [[ "$JSON" == "yes" ]]; then
-    print_result | jq -c .
+    json_result
   fi
   if [[ "$QUIET" != "yes" ]]; then
     echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
@@ -317,14 +319,13 @@ main() {
     if [[ "${DOO_ES:-}" != "" ]]; then
       declare sha1=$(print_result full | sha1sum | cut -c1-12)
       status=$(curl -s --connect-timeout 2 -XPOST "$DOO_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
-      #status=$(curl -su $U:$P --connect-timeout 2 -XPOST "$DOO_NOTIF_URL" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
 
       if [[ "$status" != "200" && "$status" != "201" && "$QUIET" != "yes" ]]; then
         echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $DOO_ES/doo/command... failed with status $status$reset"
       fi
     fi
   }
-  # Send notification
+
   notify
 
   exit $status_code
