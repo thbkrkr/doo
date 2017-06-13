@@ -145,14 +145,15 @@ main() {
   local cmd=${1:-""}
   shift
 
-  QUIET="no"
+  QUIET=${QUIET:-"no"}
   if [[ "$cmd" == "-q" ]]; then
-    QUIET="yes"
-    cmd=${1:-""}
-    shift
+    QUIET="yes" cmd=${1:-""} && shift
   fi
 
   JSON=${JSON:-"no"}
+  if [[ "$cmd" == "-j" ]]; then
+    JSON="yes" cmd=${1:-""} && shift
+  fi
 
   declare log="false"
   case $cmd in
