@@ -126,6 +126,11 @@ doo_cmd() {
       set_docker_repo
       long_cmd="docker push $DOCKER_REPO/$name"
     ;;
+    pt|pushtag)
+      set_docker_repo
+      declare sha1=$(get_sha1)
+      long_cmd="docker push $DOCKER_REPO/$name:$sha1"
+    ;;
     *)
       echo "doo: '$cmd' is not a dooo command."
       echo "See 'doo help'."
@@ -151,7 +156,7 @@ main() {
 
   declare log="false"
   case $cmd in
-    b|build|dc|u|up|t|tag|p|push)
+    b|build|dc|u|up|t|tag|p|pt|push)
       log="true"
       ;;
     bgo|buildgo)
@@ -171,6 +176,12 @@ main() {
     bp)
       doo b
       doo p
+      exit $?
+    ;;
+    btp)
+      doo b
+      doo t
+      doo pt
       exit $?
     ;;
     w|watch)
