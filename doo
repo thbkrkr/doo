@@ -27,19 +27,18 @@ Commands:
 '
 }
 
-GO_VERSION=1.8.3
+GO_VERSION=1.8.0
 
-get_sha1() {
+set_sha1() {
   GIT_SHA1=${GIT_SHA1:-"no"}
-  if [[ "$GIT_SHA1" != "no" ]]; then
-    echo $GIT_SHA1
-  else
+  if [[ "$GIT_SHA1" == "no" ]]; then
     if [[ $(git rev-parse 2> /dev/null; echo $?) == "0" ]]; then
-      git rev-parse --short HEAD
+      GIT_SHA1=$(git rev-parse --short HEAD)
     else
-      echo "latest" && return
+      GIT_SHA1="latest"
     fi
   fi
+  export GIT_SHA1=$GIT_SHA1
 }
 
 env_files() {
@@ -71,25 +70,24 @@ doo_cmd() {
   declare cmd=$1
   shift
 
-  declare long_cmd="" h=${DOCKER_MACHINE_NAME:-$(hostname)}
+  declare long_cmd="" node=${DOCKER_MACHINE_NAME:-$(hostname)}
 
   case $cmd in
     b|build)
       if [ "$EUID" -ne 0 ]; then
         sudo chown -R $USER:$USER .
       fi
-      local commit=${1:-"$(get_sha1)"} && shift
       set_docker_repo
-      long_cmd="docker build --rm --label commit=$commit -t $DOCKER_REPO/$name ."
+      long_cmd="docker build --rm --label commit=$GIT_SHA1 -t $DOCKER_REPO/$name ."
     ;;
     bgo|buildgo)
       set_docker_repo
-      local commit=${1:-"$(get_sha1)"} && shift
+      local commit=${1:-"$GIT_SHA1"} && shift
       local go_project_path=$(pwd | sed "s|.*/go/src/||")
       declare build_env="-e GOBIN=/go/bin/ -e CGO_ENABLED=0 -e GOPATH=/go"
       declare image="golang:$GO_VERSION"
       declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
-      long_cmd="docker run --rm --hostname $h -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $build_env $image go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
+      long_cmd="docker run --rm --hostname $node -v $(pwd):/go/src/$go_project_path -w /go/src/$go_project_path $build_env $image go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
     ;;
     d|dev)
       set_docker_repo
@@ -104,7 +102,7 @@ doo_cmd() {
       local go_name=${1:-""} && shift
       [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
       declare workdir=$name
-      long_cmd="docker run --rm -ti --hostname $h $(env_files) -v $(pwd):/$name -w /$workdir $opts $DOCKER_REPO/$go_name $@"
+      long_cmd="docker run --rm -ti --hostname $node $(env_files) -v $(pwd):/$name -w /$workdir $opts $DOCKER_REPO/$go_name $@"
     ;;
     dc)
       local compose_file=$1 && shift
@@ -117,9 +115,8 @@ doo_cmd() {
       long_cmd="docker-compose -f $compose_file up -d"
     ;;
     t|tag)
-      declare sha1=$(get_sha1)
-      if [[ "$sha1" != "latest" ]]; then
-        echo "docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$sha1"
+      if [[ "$GIT_SHA1" != "latest" ]]; then
+        echo "docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$GIT_SHA1"
       fi
     ;;
     p|push)
@@ -128,8 +125,7 @@ doo_cmd() {
     ;;
     pt|pushtag)
       set_docker_repo
-      declare sha1=$(get_sha1)
-      long_cmd="docker push $DOCKER_REPO/$name:$sha1"
+      long_cmd="docker push $DOCKER_REPO/$name:$GIT_SHA1"
     ;;
     *)
       echo "doo: '$cmd' is not a dooo command."
@@ -142,8 +138,9 @@ doo_cmd() {
 }
 
 main() {
-  local cmd=${1:-""}
-  shift
+  local cmd=${1:-""} && shift || true
+
+  set_sha1
 
   QUIET=${QUIET:-"no"}
   if [[ "$cmd" == "-q" ]]; then
@@ -159,13 +156,15 @@ main() {
   case $cmd in
     b|build|dc|u|up|t|tag|p|pt|push)
       log="true"
+      kind="$(get_kind $cmd)"
       ;;
     bgo|buildgo)
-      local commit=${1:-"$(get_sha1)"}
+      local commit=${1:-"$GIT_SHA1"}
       declare image="golang:$GO_VERSION"
       declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
       echo "[$image] go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
       log="true"
+      kind="build"
       ;;
     d|dev|g|go)
       ;;
@@ -222,8 +221,7 @@ main() {
   # Execute the command without posting result
 
   if [[ $log == "false" ]]; then
-    VERBOSE=${VERBOSE:-0}
-    if [[ $VERBOSE == "1" ]]; then
+    if [[ ${DOO_DEBUG:-0} == "1" ]]; then
       echo "$long_cmd"
     fi
     eval $long_cmd
@@ -236,6 +234,7 @@ main() {
   declare logfile=~/.doo/$(date +%s.$cmd.$(date +%N)$RANDOM.doo)
 
   declare start=$(date +%s)
+  declare node=${DOCKER_MACHINE_NAME:-$(hostname)}
   declare status=pending
 
   declare bold="\e[1m"
@@ -247,20 +246,9 @@ main() {
   declare reset="\e[39m"
   declare color=$cyan
 
-  # Print info
-  echo '{
-    "timestamp":"'$start'",
-    "name":"'$NAME'",
-    "status":"pending",
-    "cmd":"'$cmd'",
-    "long_cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
-    "logfile":"'$logfile'"
-  }' | jq -c . >> $logfile
-  echo >> $logfile
-
   # Execute the command and pipe the stdin/stderr in a file
   eval $long_cmd 2>&1 | tee -a $logfile
-  status_code=$?
+  declare status_code=$?
 
   # Hm, docker-compose can return 0 and have ERROR :-/
   if [[ $(grep -ic error $logfile) -gt 0 ]]; then
@@ -269,68 +257,84 @@ main() {
 
   # Set colors depending the status
   case $status_code in
-    0 ) status=OK;    color=green color1=$cyan  ; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
+    0 ) status=OK;    color=green color1=$cyan; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
     * ) status=ERROR; color=red color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
   esac
 
-
-  declare end=$(date +%s)
   declare lastline="$(tail -1 $logfile | strings)"
-  declare duration=$(($end - $start))
+  declare duration=$(($(date +%s) - $start))
 
-  declare from=$(hostname)
-  DOCKER_MACHINE_NAME=${DOCKER_MACHINE_NAME:-""}
-  [[ $DOCKER_MACHINE_NAME != "" ]] && from=$DOCKER_MACHINE_NAME
-
-  fullmsg() {
-    tail -n +3 $logfile | grep -v "Sending" | base64
+  get_output() {
+    tail -n +2 $logfile | grep -v "Sending" | base64 -w0
   }
 
-  print_result() {
-    declare full=${1:-""}
-    [[ "$full" == "full" ]] && full=',"message":"'$(fullmsg)'"'
+  htmlSummary() {
+    echo '<a class=\"ui '$color' tiny horizontal label\">' \
+      $status'</a> '$kind' '$NAME '<a href>'$GIT_SHA1'</a>'
+  }
+
+  jsonEvent() {
+    declare output=${1:-""}
+    [[ "$output" == "withOutput" ]] && output=',"Output":"'$(get_output)'"'
     echo '{
-      "timestamp":"'$(date +%s)'",
-      "name":"'$NAME'",
-      "user":"'$from'",
-      "source":"'$from'",
-      "title":"<a class=\"ui '$color' horizontal label\">'$status'</a> '$long_cmd'",
-      "cmd":"'$cmd'",
-      "status":"'$status'",
-      "duration_sec":"'$duration'",
-      "long_cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
-      "lastline":"'$lastline'"
-      '$full'
+      "Timestamp":"'$(date +%s)'",
+      "Kind":"'$kind'",
+      "Service":"'$NAME'",
+      "Node":"'$node'",
+      "Status":"'$status'",
+      "Name":"'$kind' '$NAME' '$GIT_SHA1'",
+      "Html":"'$(htmlSummary)'",
+      "Sha1":"'$GIT_SHA1'",
+      "Cmd":"'$(sed "s/\"/'/g" <<< $long_cmd)'",
+      "DurationSec":"'$duration'",
+      "LastLine":"'$lastline'"
+      '$output'
     }'
   }
 
-  json_result() { print_result | jq -c .; }
+  jsonify() { jsonEvent | jq -c .; }
 
-  sed -i "1s|.*|$(json_result)|" $logfile
+  sed -i "1s|.*|$(jsonify)|" $logfile
 
   if [[ "$JSON" == "yes" ]]; then
-    json_result
+    jsonify
   fi
+
   if [[ "$QUIET" != "yes" ]]; then
     echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
   fi
 
-  notify() {
-    if [[ "${DOO_ES:-}" != "" ]]; then
-      declare sha1=$(print_result full | sha1sum | cut -c1-12)
-      status=$(curl -s --connect-timeout 2 -XPOST "$DOO_ES/doo/commands/$sha1" -d "$(print_result full)" -o /dev/null -w "%{http_code}")
-
-      if [[ "$status" != "200" && "$status" != "201" && "$QUIET" != "yes" ]]; then
-        echo -e "$red${bold}KO$reset_bold$reset: ${cyan}curl -XPOST $DOO_ES/doo/command... failed with status $status$reset"
+  sendToElastic() {
+    if [[ "${EVENTS_API:-}" != "" ]]; then
+      declare sha1=$(jsonEvent withOutput | sha1sum | cut -c1-12)
+      post_status=$(curl -s --connect-timeout 2 -XPOST "$EVENTS_API/$sha1" -d "$(jsonEvent withOutput)" -o /dev/null -w "%{http_code}")
+      if [[ "$post_status" != "200" && "$post_status" != "201" && "$QUIET" != "yes" ]]; then
+        echo -e "$red${bold}KO$reset_bold$reset: ${cyan}Event API POST failed: status=$post_status$reset"
       fi
     fi
   }
 
-  notify
+  sendToKafka() {
+    if [[ "${B:-}" != "" ]]; then
+      jsonEvent withOutput | jq -cM . | oq &
+    fi
+  }
+
+  sendToElastic
+  sendToKafka
 
   exit $status_code
 }
 
+get_kind() {
+  declare cmd=$1
+  case $cmd in
+    b|build)   echo "build" ;;
+    dc|u|up)   echo "deploy" ;;
+    t|tag)     echo "tag"   ;;
+    p|pt|push) echo "push"  ;;
+  esac
+}
 
 
 main "$@"
