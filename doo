@@ -99,20 +99,20 @@ doo_cmd() {
       if [[ "$1" =~ ^- ]]; then
         opts="$1 $2" && shift && shift
       fi
-      local go_name=${1:-""} && shift
+      declare go_name=${1:-""} && shift
       [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
-      declare workdir=$name
+      local workdir=$name
       long_cmd="docker run --rm -ti --hostname $node $(env_files) -v $(pwd):/$name -w /$workdir $opts $DOCKER_REPO/$go_name $@"
     ;;
     dc)
-      local compose_file=$1 && shift
-      declare compose_project=$(basename $compose_file | sed "s/.yml//")
+      declare compose_file=$1 && shift
+      local compose_project=$(basename $compose_file | sed "s/.yml//")
 
       long_cmd="docker-compose -f $compose_file -p $compose_project $@"
     ;;
     u|up)
-      declare compose_file=$(find . -maxdepth 1 -name "*.yml")
-      long_cmd="docker-compose -f $compose_file up -d"
+      declare name=$1 compose_file=$2
+      long_cmd="docker stack deploy $name --with-registry-auth -c $compose_file.yml"
     ;;
     t|tag)
       if [[ "$GIT_SHA1" != "latest" ]]; then
@@ -137,6 +137,8 @@ doo_cmd() {
   echo "$long_cmd"
 }
 
+NAME=$(basename $(pwd))
+
 main() {
   local cmd=${1:-""} && shift || true
 
@@ -152,16 +154,30 @@ main() {
     JSON="yes" cmd=${1:-""} && shift
   fi
 
+  # Use the current directory as the docker image name
+  # Try to get name from DOCKER_NAME env var defined in .docker.env
+  if [[ -f .docker.env ]]; then
+    n=$(grep DOCKER_NAME .docker.env | sed "s/DOCKER_NAME=//")
+    if [[ "$n" != "" ]]; then
+      NAME=$n
+    fi
+  fi
+
   declare log="false"
   case $cmd in
-    b|build|dc|u|up|t|tag|p|pt|push)
+    b|build|dc|t|tag|p|pt|push)
       log="true"
       kind="$(get_kind $cmd)"
       ;;
+    u|up)
+      log="true"
+      kind="$(get_kind $cmd)"
+      NAME=$(sed "s|.*/||" <<< $2)
+      ;;
     bgo|buildgo)
-      local commit=${1:-"$GIT_SHA1"}
-      declare image="golang:$GO_VERSION"
-      declare build_date=$(date "+%Y-%m-%dT%H:%M:%S")
+      declare commit=${1:-"$GIT_SHA1"}
+      local image="golang:$GO_VERSION"
+      local build_date=$(date "+%Y-%m-%dT%H:%M:%S")
       echo "[$image] go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
       log="true"
       kind="build"
@@ -204,22 +220,10 @@ main() {
       exit 1 ;;
   esac
 
-  # Use the current directory as the docker image name
-  NAME=$(basename $(pwd))
-
-  # Try to get name from DOCKER_NAME env var defined in .docker.env
-  if [[ -f .docker.env ]]; then
-    n=$(grep DOCKER_NAME .docker.env | sed "s/DOCKER_NAME=//")
-    if [[ "$n" != "" ]]; then
-      NAME=$n
-    fi
-  fi
-
   # Get the command to execute
   declare long_cmd="$(doo_cmd $cmd "$@")"
 
   # Execute the command without posting result
-
   if [[ $log == "false" ]]; then
     if [[ ${DOO_DEBUG:-0} == "1" ]]; then
       echo "$long_cmd"
@@ -231,24 +235,24 @@ main() {
   # Execute the command by posting result
 
   mkdir -p ~/.doo
-  declare logfile=~/.doo/$(date +%s.$cmd.$(date +%N)$RANDOM.doo)
+  local logfile=~/.doo/$(date +%s.$cmd.$(date +%N)$RANDOM.doo)
 
-  declare start=$(date +%s)
-  declare node=${DOCKER_MACHINE_NAME:-$(hostname)}
-  declare status=pending
+  local start=$(date +%s)
+  local node=${DOCKER_MACHINE_NAME:-$(hostname)}
+  local status=pending
 
-  declare bold="\e[1m"
-  declare reset_bold="\e[0m"
-  declare cyan="\e[36m"
-  declare green="\e[32m"
-  declare purple="\e[35m"
-  declare red="\e[31m"
-  declare reset="\e[39m"
-  declare color=$cyan
+  local bold="\e[1m"
+  local reset_bold="\e[0m"
+  local cyan="\e[36m"
+  local green="\e[32m"
+  local purple="\e[35m"
+  local red="\e[31m"
+  local reset="\e[39m"
+  local color=$cyan
 
   # Execute the command and pipe the stdin/stderr in a file
   eval $long_cmd 2>&1 | tee -a $logfile
-  declare status_code=$?
+  local status_code=$?
 
   # Hm, docker-compose can return 0 and have ERROR :-/
   if [[ $(grep -ic error $logfile) -gt 0 ]]; then
@@ -265,7 +269,7 @@ main() {
   declare duration=$(($(date +%s) - $start))
 
   get_output() {
-    tail -n +2 $logfile | grep -v "Sending" | base64 -w0
+    tail -n +2 $logfile | grep -v "Sending" | base64
   }
 
   htmlSummary() {
@@ -306,8 +310,8 @@ main() {
 
   sendToElastic() {
     if [[ "${EVENTS_API:-}" != "" ]]; then
-      declare sha1=$(jsonEvent withOutput | sha1sum | cut -c1-12)
-      post_status=$(curl -s --connect-timeout 2 -XPOST "$EVENTS_API/$sha1" -d "$(jsonEvent withOutput)" -o /dev/null -w "%{http_code}")
+      local sha1=$(jsonEvent withOutput | sha1sum | cut -c1-12)
+      local post_status=$(curl -s --connect-timeout 2 -XPOST "$EVENTS_API/$sha1" -d "$(jsonEvent withOutput)" -o /dev/null -w "%{http_code}")
       if [[ "$post_status" != "200" && "$post_status" != "201" && "$QUIET" != "yes" ]]; then
         echo -e "$red${bold}KO$reset_bold$reset: ${cyan}Event API POST failed: status=$post_status$reset"
       fi
