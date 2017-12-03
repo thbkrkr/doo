@@ -15,14 +15,15 @@ all directories that appears in the COPY Dockerfile directives with --volume.
 
 Commands:
   b, build        docker build $DOCKER_REPO/$NAME
-  t, tag          docker tag   $DOCKER_REPO/$NAME:VERSION (VERSION: sha1 if git repo and/or latest)
   p, push         docker push  $DOCKER_REPO/$NAME
+  t, tag          docker tag   $DOCKER_REPO/$NAME:$GIT_SHA1 (GIT_SHA1: sha1 if git repo or latest)
+  pt, pushtag     docker push  $DOCKER_REPO/$NAME:$GIT_SHA1
 
-  bgo, buildgo    build go binary in docker (docker run -v $PWD:/go/src/<package> golang:1.8.0 go build)
+  bgo, buildgo    build go binary in docker (docker run -v $PWD:/go/src/<package> golang:'$GO_VERSION' go build)
 
-  u, up                        docker compose up -d by using the first .yml found in the current directory
-  dc [COMPOSE_FILE] ARGS...    docker compose ARGS  by using the first .yml found in the current directory or
-                               a given compose file
+  u, up [NAME] [COMPOSE_FILE]   docker stack deploy
+  dc [COMPOSE_FILE] ARGS...     docker compose ARGS  by using the first .yml found in the current directory or
+                                a given compose file
 
   d, dev          docker run -ti $DOCKER_REPO/$NAME by loading env-files and mounting current directories
   g, go  IMAGE    docker run $IMAGE                 by loading env-files and mounting current directories
@@ -62,7 +63,7 @@ mounted_volumes() {
 
 set_docker_repo() {
   [ -f .docker.env ] && export $(cat .docker.env | xargs)
-  DOCKER_REPO=${DOCKER_REPO:-"krkr"}
+  DOCKER_REPO=${DOCKER_REPO:-""}
   [[ $DOCKER_REPO == "" ]] && echo "err: DOCKER_REPO not set" && return 1
 }
 
@@ -100,25 +101,14 @@ doo_cmd() {
       if [[ "$1" =~ ^- ]]; then
         opts="$1 $2" && shift && shift
       fi
-      declare go_name=${1:-""} && shift
-      [[ $go_name && "" ]] && echo "err: NAME not set" && return 1
+      declare image=${1:-""} && shift
+      [[ $image && "" ]] && echo "err: NAME not set" && return 1
       local workdir=$name
-      long_cmd="docker run --rm -ti --hostname $node $(env_files) -v $(pwd):/$name -w /$workdir $opts $DOCKER_REPO/$go_name $@"
-    ;;
-    dc)
-      declare compose_file=$1 && shift
-      local compose_project=$(basename $compose_file | sed "s/.yml//")
-
-      long_cmd="docker-compose -f $compose_file -p $compose_project $@"
-    ;;
-    u|up)
-      declare name=$1 compose_file=$2
-      long_cmd="docker stack deploy $name --with-registry-auth -c $compose_file.yml"
+      long_cmd="docker run --rm -ti --hostname $node $(env_files) -v $(pwd):/$name -w /$workdir $opts $DOCKER_REPO/$image $@"
     ;;
     t|tag)
-      if [[ "$GIT_SHA1" != "latest" ]]; then
-        echo "docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$GIT_SHA1"
-      fi
+      set_docker_repo
+      long_cmd="docker tag $DOCKER_REPO/$name $DOCKER_REPO/$name:$GIT_SHA1"
     ;;
     p|push)
       set_docker_repo
@@ -128,14 +118,44 @@ doo_cmd() {
       set_docker_repo
       long_cmd="docker push $DOCKER_REPO/$name:$GIT_SHA1"
     ;;
+    dc)
+      declare compose_file=$1 && shift
+      local compose_project=$(basename $compose_file | sed "s/.yml//")
+
+      long_cmd="docker-compose -f $compose_file -p $compose_project $@"
+    ;;
+    u|up)
+      declare service_name=$1 compose_file=$2
+      long_cmd="docker stack deploy $service_name --with-registry-auth -c $compose_file.yml"
+    ;;
     *)
-      echo "doo: '$cmd' is not a dooo command."
+      echo "doo: '$cmd' is not a doo command."
       echo "See 'doo help'."
       exit 1
     ;;
   esac
 
   echo "$long_cmd"
+}
+
+get_kind() {
+  declare cmd=$1
+  case $cmd in
+    b|build|bgo|buildgo)   echo "build" ;;
+    dc|u|up)               echo "deploy" ;;
+    t|tag)                 echo "tag"   ;;
+    p|pt|push)             echo "push"  ;;
+  esac
+}
+
+kurl() {
+  declare name=$1 && shift
+
+  local post_status=$(curl -s --connect-timeout 2 "$@" -XPOST -d @- -o /dev/null -w "%{http_code}")
+
+  if [[ "$post_status" != "200" && "$post_status" != "201" && "$QUIET" != "yes" ]]; then
+    echo -e "$red${bold}KO$reset_bold$reset: ${cyan}$name POST failed: status=$post_status$reset"
+  fi
 }
 
 NAME=$(basename $(pwd))
@@ -164,24 +184,20 @@ main() {
     fi
   fi
 
-  declare log="false"
+  declare notify="false"
   case $cmd in
     b|build|dc|t|tag|p|pt|push)
-      log="true"
+      notify="true"
       kind="$(get_kind $cmd)"
       ;;
     u|up)
-      log="true"
+      notify="true"
       kind="$(get_kind $cmd)"
       NAME=$(sed "s|.*/||" <<< $2)
       ;;
     bgo|buildgo)
-      declare commit=${1:-"$GIT_SHA1"}
-      local image="golang:$GO_VERSION"
-      local build_date=$(date "+%Y-%m-%dT%H:%M:%S")
-      echo "[$image] go build -ldflags \"-X main.gitCommit=${commit} -X main.buildDate=$build_date\""
-      log="true"
-      kind="build"
+      notify="true"
+      kind="$(get_kind $cmd)"
       ;;
     d|dev|g|go)
       ;;
@@ -195,23 +211,12 @@ main() {
       doo p
       exit $?
     ;;
-    btp)
+    r|release)
       doo b
       doo t
       doo pt
       exit $?
     ;;
-    w|watch)
-      rm -f ~/.doo/*.doo
-      while true; do
-        clear;
-        echo "[$(date +%Y%m%d-%Hh%Mm%S)] > doo watch..."
-        find ~/.doo -type f -name "*.doo" | xargs -n1 head -1 \
-          | tail -6 | sort -r \
-          | jq -c '{date:.timestamp,status:.status,action:.cmd,cmd:.long_cmd,msg:.title}'
-        sleep 1
-      done
-      ;;
     ""|h|help)
       help
       exit 0 ;;
@@ -225,7 +230,7 @@ main() {
   declare long_cmd="$(doo_cmd $cmd "$@")"
 
   # Execute the command without posting result
-  if [[ $log == "false" ]]; then
+  if [[ $notify == "false" ]]; then
     if [[ ${DOO_DEBUG:-0} == "1" ]]; then
       echo "$long_cmd"
     fi
@@ -262,14 +267,14 @@ main() {
 
   # Set colors depending the status
   case $status_code in
-    0 ) status=OK;    color=green color1=$cyan; color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
-    * ) status=ERROR; color=red color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
+    0 ) status=OK;    color=green color1=$cyan;   color2=$green; htmlColor=#03A9F4; htmlColor2=#4CAF50 ;;
+    * ) status=ERROR; color=red   color1=$purple; color2=$red  ; htmlColor=#9C27B0; htmlColor2=#F44336 ;;
   esac
 
   declare lastline="$(tail -1 $logfile | strings)"
   declare duration=$(($(date +%s) - $start))
 
-  get_output() {
+  get_b64output() {
     tail -n +2 $logfile | grep -v "Sending" | base64
   }
 
@@ -280,7 +285,9 @@ main() {
 
   jsonEvent() {
     declare output=${1:-""}
-    [[ "$output" == "withOutput" ]] && output=',"Output":"'$(get_output)'"'
+
+    [[ "$output" == "withOutput" ]] && output=',"Output":"'$(get_b64output)'"' || true
+
     echo '{
       "Timestamp":"'$(date +%s)'",
       "Kind":"'$kind'",
@@ -297,7 +304,21 @@ main() {
     }'
   }
 
-  jsonify() { jsonEvent | jq -c .; }
+  jsonify() { jsonEvent | jq -cM .; }
+
+  sendToElastic() {
+    if [[ "${EVENTS_API:-}" != "" ]]; then
+      local sha1=$(jsonEvent withOutput | sha1sum | cut -c1-12)
+      jsonEvent withOutput | kurl elastic "$EVENTS_API/$sha1"
+    fi
+  }
+
+  sendToKafka() {
+    if [[ "${B:-}" != "" ]]; then
+      local url="https://${B%:9093}:443/topic/$T?format=raw"
+      jsonEvent withOutput | kurl kafka -u "$U:$P" "$url"
+    fi
+  }
 
   sed -i "1s|.*|$(jsonify)|" $logfile
 
@@ -309,37 +330,10 @@ main() {
     echo -e "$color2$bold$status$reset_bold$reset: $cyan$long_cmd$reset"
   fi
 
-  sendToElastic() {
-    if [[ "${EVENTS_API:-}" != "" ]]; then
-      local sha1=$(jsonEvent withOutput | sha1sum | cut -c1-12)
-      local post_status=$(curl -s --connect-timeout 2 -XPOST "$EVENTS_API/$sha1" -d "$(jsonEvent withOutput)" -o /dev/null -w "%{http_code}")
-      if [[ "$post_status" != "200" && "$post_status" != "201" && "$QUIET" != "yes" ]]; then
-        echo -e "$red${bold}KO$reset_bold$reset: ${cyan}Event API POST failed: status=$post_status$reset"
-      fi
-    fi
-  }
-
-  sendToKafka() {
-    if [[ "${B:-}" != "" ]]; then
-      jsonEvent withOutput | jq -cM . | oq &
-    fi
-  }
-
   sendToElastic
   sendToKafka
 
   exit $status_code
 }
-
-get_kind() {
-  declare cmd=$1
-  case $cmd in
-    b|build)   echo "build" ;;
-    dc|u|up)   echo "deploy" ;;
-    t|tag)     echo "tag"   ;;
-    p|pt|push) echo "push"  ;;
-  esac
-}
-
 
 main "$@"
